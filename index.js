@@ -48,6 +48,28 @@ app.post('/send-notification', async (req, res) => {
     }
 });
 
+// Helper function to check and update last response time
+async function shouldSendResponse(senderWaId) {
+    const userRef = db.collection('userResponses').doc(senderWaId);
+    const doc = await userRef.get();
+
+    if (!doc.exists) {
+        await userRef.set({ lastResponseTime: admin.firestore.FieldValue.serverTimestamp() });
+        return true;
+    }
+
+    const lastResponseTime = doc.data().lastResponseTime.toDate();
+    const now = new Date();
+    const timeDiff = (now - lastResponseTime) / (1000 * 60); // difference in minutes
+
+    if (timeDiff > 5) {
+        await userRef.update({ lastResponseTime: admin.firestore.FieldValue.serverTimestamp() });
+        return true;
+    }
+
+    return false;
+}
+
 // Twilio webhook endpoint
 app.post('/whatsapp/webhook', async (req, res) => {
     const numMedia = req.body.NumMedia || 0;
@@ -71,8 +93,11 @@ app.post('/whatsapp/webhook', async (req, res) => {
             });
             console.log(`Saved media from WaId ${senderWaId}: ${mediaUrls}`);
 
-            // Respond to WhatsApp with a thank you message
-            twiml.message('Thanks for sending the image(s)!');
+            // Check if we should send a response
+            const shouldRespond = await shouldSendResponse(senderWaId);
+            if (shouldRespond) {
+                twiml.message('Thanks for sending the image(s)!');
+            }
         } catch (error) {
             console.error('Error saving media URL to Firestore:', error);
             twiml.message('There was an error saving your image.');
@@ -81,7 +106,7 @@ app.post('/whatsapp/webhook', async (req, res) => {
         // Handle text received
         const message = req.body.Body;
         console.log(`Received message from ${senderWaId}: ${message}`);
-        twiml.message('Thanks for the message!');
+        // We might want to handle text messages differently or ignore them
     }
 
     // Make sure we respond only once
@@ -104,7 +129,7 @@ app.get('/whatsapp/images/:waId', async (req, res) => {
 
         const mediaUrls = [];
         mediaQuerySnapshot.forEach(doc => mediaUrls.push(...doc.data().mediaUrls));
-    console.log(mediaUrls);
+        console.log(mediaUrls);
         res.status(200).json({ urls: mediaUrls });
     } catch (error) {
         console.error('Error fetching media:', error);
