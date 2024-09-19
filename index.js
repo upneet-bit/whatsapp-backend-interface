@@ -7,6 +7,7 @@ require('dotenv').config(); // To load environment variables
 const cors = require('cors');
 const app = express();
 const port = process.env.PORT || 5000;
+let isFirst = true;
 
 app.use(cors({
     origin: 'http://localhost:3000' // Allow only your frontend origin
@@ -48,28 +49,6 @@ app.post('/send-notification', async (req, res) => {
     }
 });
 
-// Helper function to check and update last response time
-async function shouldSendResponse(senderWaId) {
-    const userRef = db.collection('userResponses').doc(senderWaId);
-    const doc = await userRef.get();
-
-    if (!doc.exists) {
-        await userRef.set({ lastResponseTime: admin.firestore.FieldValue.serverTimestamp() });
-        return true;
-    }
-
-    const lastResponseTime = doc.data().lastResponseTime.toDate();
-    const now = new Date();
-    const timeDiff = (now - lastResponseTime) / (1000 * 60); // difference in minutes
-
-    if (timeDiff > 5) {
-        await userRef.update({ lastResponseTime: admin.firestore.FieldValue.serverTimestamp() });
-        return true;
-    }
-
-    return false;
-}
-
 // Twilio webhook endpoint
 app.post('/whatsapp/webhook', async (req, res) => {
     const numMedia = req.body.NumMedia || 0;
@@ -83,7 +62,6 @@ app.post('/whatsapp/webhook', async (req, res) => {
             const mediaUrl = req.body[`MediaUrl${i}`];
             mediaUrls.push(mediaUrl);
         }
-
         // Save the media URLs to Firestore along with sender's WaId
         try {
             await db.collection('whatsappMedia').add({
@@ -93,10 +71,16 @@ app.post('/whatsapp/webhook', async (req, res) => {
             });
             console.log(`Saved media from WaId ${senderWaId}: ${mediaUrls}`);
 
-            // Check if we should send a response
-            const shouldRespond = await shouldSendResponse(senderWaId);
-            if (shouldRespond) {
+            // Respond to WhatsApp with a thank you message
+            
+            if(isFirst) {
                 twiml.message('Thanks for sending the image(s)!');
+                isFirst = false;
+            } else {
+                const intervalId = setInterval(async () => {
+                    twiml.message('Thanks for sending the image(s)!');
+                  }, 100000);
+                  return () => clearInterval(intervalId);   
             }
         } catch (error) {
             console.error('Error saving media URL to Firestore:', error);
@@ -106,7 +90,7 @@ app.post('/whatsapp/webhook', async (req, res) => {
         // Handle text received
         const message = req.body.Body;
         console.log(`Received message from ${senderWaId}: ${message}`);
-        // We might want to handle text messages differently or ignore them
+        twiml.message('Thanks for the message!');
     }
 
     // Make sure we respond only once
